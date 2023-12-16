@@ -223,6 +223,7 @@ static int igb_timesync_read_time(struct rte_eth_dev *dev,
 				  struct timespec *timestamp);
 static int igb_timesync_write_time(struct rte_eth_dev *dev,
 				   const struct timespec *timestamp);
+static int eth_igb_read_clock(__rte_unused struct rte_eth_dev *dev, uint64_t *clock);
 static int eth_igb_rx_queue_intr_enable(struct rte_eth_dev *dev,
 					uint16_t queue_id);
 static int eth_igb_rx_queue_intr_disable(struct rte_eth_dev *dev,
@@ -313,6 +314,9 @@ static const struct rte_pci_id pci_id_igbvf_map[] = {
 	{ .vendor_id = 0, /* sentinel */ },
 };
 
+uint64_t igb_tx_timestamp_dynflag;
+int igb_tx_timestamp_dynfield_offset = -1;
+
 static const struct rte_eth_desc_lim rx_desc_lim = {
 	.nb_max = E1000_MAX_RING_DESC,
 	.nb_min = E1000_MIN_RING_DESC,
@@ -389,6 +393,7 @@ static const struct eth_dev_ops eth_igb_ops = {
 	.timesync_adjust_time = igb_timesync_adjust_time,
 	.timesync_read_time   = igb_timesync_read_time,
 	.timesync_write_time  = igb_timesync_write_time,
+	.read_clock		      = eth_igb_read_clock,
 };
 
 /*
@@ -1198,6 +1203,7 @@ eth_igb_start(struct rte_eth_dev *dev)
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	struct rte_intr_handle *intr_handle = pci_dev->intr_handle;
 	int ret, mask;
+	uint32_t tqavctrl;
 	uint32_t intr_vector = 0;
 	uint32_t ctrl_ext;
 	uint32_t *speeds;
@@ -1279,6 +1285,15 @@ eth_igb_start(struct rte_eth_dev *dev)
 		PMD_INIT_LOG(ERR, "Unable to initialize RX hardware");
 		igb_dev_clear_queues(dev);
 		return ret;
+	}
+
+	if (igb_tx_timestamp_dynflag > 0){
+    	tqavctrl = E1000_READ_REG(hw, E1000_I210_TQAVCTRL);
+    	tqavctrl |= E1000_TQAVCTRL_MODE;
+    	tqavctrl |= E1000_TQAVCTRL_FETCH_ARB; /* Fetch the queue most empty, no Round Robin*/
+    	tqavctrl |= E1000_TQAVCTRL_LAUNCH_TIMER_ENABLE; /* Enable launch time */
+    	E1000_WRITE_REG(hw, E1000_I210_TQAVCTRL, tqavctrl); 
+		E1000_WRITE_REG(hw, E1000_I210_LAUNCH_OS0, 1ULL << 31); /* Set the Launch time offset as default 0 */
 	}
 
 	e1000_clear_hw_cntrs_base_generic(hw);
@@ -4880,6 +4895,19 @@ igb_timesync_read_tx_timestamp(struct rte_eth_dev *dev,
 	*timestamp = rte_ns_to_timespec(ns);
 
 	return  0;
+}
+
+static int
+eth_igb_read_clock(__rte_unused struct rte_eth_dev *dev, uint64_t *clock)
+{
+    uint64_t systime_cycles;
+    struct e1000_adapter *adapter = dev->data->dev_private;
+
+    systime_cycles = igb_read_systime_cyclecounter(dev);
+    uint64_t ns = rte_timecounter_update(&adapter->systime_tc, systime_cycles);
+    *clock = ns;
+
+    return 0;
 }
 
 static int

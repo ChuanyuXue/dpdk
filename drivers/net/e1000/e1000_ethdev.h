@@ -382,6 +382,9 @@ extern struct igb_rss_filter_list igb_filter_rss_list;
 TAILQ_HEAD(igb_flow_mem_list, igb_flow_mem);
 extern struct igb_flow_mem_list igb_flow_list;
 
+extern uint64_t igb_tx_timestamp_dynflag;
+extern int igb_tx_timestamp_dynfield_offset;
+
 extern const struct rte_flow_ops igb_flow_ops;
 
 /*
